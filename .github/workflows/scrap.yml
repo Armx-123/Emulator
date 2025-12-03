@@ -14,46 +14,50 @@ jobs:
     - name: Set up Android SDK
       uses: android-actions/setup-android@v3
 
+    - name: Install system image
+      run: |
+        sdkmanager --install "platform-tools"
+        sdkmanager --install "platforms;android-30"
+        sdkmanager --install "system-images;android-30;google_apis;x86_64"
+
     - name: Create AVD
       run: |
-        yes "no" | avdmanager create avd \
+        echo "no" | avdmanager create avd \
           --name test \
           --package "system-images;android-30;google_apis;x86_64" \
-          --device "Nexus 6"
+          --device "pixel"
 
     - name: Start emulator
       run: |
         nohup emulator -avd test \
           -no-window \
           -gpu swiftshader_indirect \
-          -no-snapshot \
           -noaudio \
           -no-boot-anim \
+          -no-snapshot \
           > /dev/null 2>&1 &
-        sleep 8
+        sleep 10
 
     - name: Wait for boot
       run: |
         adb wait-for-device
-        for i in {1..45}; do
-          booted=$(adb shell getprop sys.boot_completed 2>/dev/null)
+        for x in {1..45}; do
+          booted=$(adb shell getprop sys.boot_completed)
           if [[ "$booted" == "1" ]]; then
-            echo "Emulator ready."
+            echo "Boot completed!"
             exit 0
           fi
-          echo "Booting emulator ($i)..."
+          echo "Booting... $x"
           sleep 4
         done
-        echo "Emulator failed to boot."
+        echo "Failed to boot."
         exit 1
 
     - name: Install APK
       run: adb install base-patched.apk
 
     - name: Launch App
-      run: |
-        # Replace with your actual package name
-        adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
+      run: adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
 
     - name: Print logcat
       run: adb logcat -d

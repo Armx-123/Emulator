@@ -84,10 +84,10 @@ jobs:
           emulator-options: "-no-window -noaudio -no-boot-anim"
           script: ./emulator_script.sh
           
-      # --- NEW STEP: UPLOAD ARTIFACT ---
       - name: Upload Debug Screenshot
-        uses: actions/upload-artifact@v3
-        if: always() # Upload artifact even if the previous step failed
+        # FIX APPLIED HERE: Changed @v3 to @v4
+        uses: actions/upload-artifact@v4
+        if: always() 
         with:
           name: emulator-screenshot
           path: screenshot.png

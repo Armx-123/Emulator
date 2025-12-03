@@ -1,0 +1,72 @@
+name: Intercept Android App Traffic (Long Running)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  intercept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Maximum allowed by GitHub (6 hours)
+
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v3
+
+    - name: Install Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Create and Start Emulator
+      run: |
+        sdkmanager --install "system-images;android-30;google_apis;x86_64"
+        echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" --device "pixel"
+        nohup emulator -avd test -no-audio -no-window -gpu swiftshader_indirect &
+        adb wait-for-device
+        adb devices
+
+    - name: Install mitmproxy
+      run: pip install mitmproxy
+
+    - name: Start mitmproxy
+      run: |
+        nohup mitmdump -w flows.mitm --listen-port 8080 &
+        sleep 4
+
+    - name: Configure Proxy on Emulator
+      run: adb shell settings put global http_proxy 127.0.0.1:8080
+
+    - name: Copy mitmproxy CA cert to emulator
+      run: |
+        adb push ~/.mitmproxy/mitmproxy-ca-cert.pem /sdcard/Download/mitmproxy-ca-cert.pem
+        # User cert install is normally automatic if the app relies on system CA store
+
+    - name: Main Long-Running Loop
+      run: |
+        for i in $(seq 1 2000)
+        do
+          echo "=========================="
+          echo " Cycle $i starting..."
+          echo "=========================="
+
+          # Clear app data
+          adb shell pm clear com.your.app.package
+
+          # Install APK fresh
+          adb install -r your_app.apk
+
+          # Launch app
+          adb shell monkey -p com.your.app.package -c android.intent.category.LAUNCHER 1
+
+          # Wait for network traffic
+          sleep 5
+
+          # Save flows for this cycle
+          cp flows.mitm flows_$i.mitm
+
+          echo "Cycle $i complete."
+        done
+
+    - name: Upload all captured flows
+      uses: actions/upload-artifact@v3
+      with:
+        name: intercepted-traffic
+        path: flows_*.mitm

@@ -1,7 +1,6 @@
 name: Run APK in Emulator
 
 on:
-  # Allows you to run this workflow manually from the GitHub Actions tab
   workflow_dispatch:
 
 jobs:
@@ -12,11 +11,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Sets up the necessary Android SDK environment
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # Installs the specific system image needed for API 29
       - name: Install system image
         run: |
           sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;default;x86" --verbose
@@ -30,44 +27,43 @@ jobs:
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           
-          # The entire script is now a single, cohesive shell block
+          # Use a Here-Document (<< 'EOF' ... EOF) for reliable multi-line script execution
           script: |
+            /bin/bash << 'EOF'
+            
             echo "Waiting for boot completion..."
-            # CRITICAL: Wait for the device to be ready before running ADB commands
             adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
 
             echo "Detecting emulator resolution..."
             
-            # Use semicolons (;) and line continuation (\) to ensure all assignments 
-            # and logic execute in a single process without shell errors.
-            SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r'); \
-            WIDTH=$(echo "$SIZE" | cut -d'x' -f1); \
-            HEIGHT=$(echo "$SIZE" | cut -d'x' -f2); \
+            SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
+            WIDTH=$(echo "$SIZE" | cut -d'x' -f1)
+            HEIGHT=$(echo "$SIZE" | cut -d'x' -f2)
             
             if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
               echo "Error: Could not determine screen resolution. Check emulator status."
               exit 1
-            fi;
+            fi
 
             echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
             
-            # Calculate coordinates
-            X_DISMISS=$((WIDTH * 20 / 100)); \
-            Y_DISMISS=$((HEIGHT * 78 / 100)); \
-            X_CONT=$((WIDTH * 50 / 100)); \
-            Y_CONT=$((HEIGHT * 88 / 100)); \
+            X_DISMISS=$((WIDTH * 20 / 100))
+            Y_DISMISS=$((HEIGHT * 78 / 100))
+            X_CONT=$((WIDTH * 50 / 100))
+            Y_CONT=$((HEIGHT * 88 / 100))
             
             echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"
-            adb shell input tap "$X_DISMISS" "$Y_DISMISS"; \
+            adb shell input tap "$X_DISMISS" "$Y_DISMISS"
             
-            sleep 1; \
-            echo "Tapping CONTINUE 4 times"; \
+            sleep 1
+            echo "Tapping CONTINUE 4 times"
             
-            # The 'for' loop structure is now correctly contained
             for i in $(seq 1 4); do
               adb shell input tap "$X_CONT" "$Y_CONT"
               sleep 1
-            done;
+            done
             
             echo "Printing filtered app logs..."
             adb logcat -s "newway.open.chatgpt.ai.chat.bot.free"
+            
+            EOF

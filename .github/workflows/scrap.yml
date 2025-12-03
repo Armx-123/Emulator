@@ -8,24 +8,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
+
+      - name: Install system image
+        run: |
+          sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;default;x86" --verbose
 
       - name: Run emulator and install APK
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: 29
           target: default
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           script: |
-            # Install your APK
             adb install base-patched.apk
-            # Launch the app
             adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
-            # Print logs
             adb logcat -d

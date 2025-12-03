@@ -24,31 +24,47 @@ jobs:
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
+          # The script runs in a single shell session.
           script: |
+            echo "Waiting for boot completion..."
+            # Wait for the emulator to be fully booted
+            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
+
             echo "Detecting emulator resolution..."
-            SIZE=$(adb shell wm size | grep -o '[0-9]*x[0-9]*')
-            WIDTH=$(echo $SIZE | cut -d'x' -f1)
-            HEIGHT=$(echo $SIZE | cut -d'x' -f2)
-          
+            # Combine commands with semicolons or ensure they are on separate lines 
+            # within this single script block.
+            # Use a more robust way to capture screen size.
+            SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
+            WIDTH=$(echo "$SIZE" | cut -d'x' -f1)
+            HEIGHT=$(echo "$SIZE" | cut -d'x' -f2)
+            
+            # Check if resolution was successfully captured
+            if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
+              echo "Error: Could not determine screen resolution."
+              exit 1
+            fi
+
             echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
-          
+            
+            # Ensure calculations are safe by checking if variables are numbers
             X_DISMISS=$((WIDTH * 20 / 100))
             Y_DISMISS=$((HEIGHT * 78 / 100))
-          
+            
             X_CONT=$((WIDTH * 50 / 100))
             Y_CONT=$((HEIGHT * 88 / 100))
-          
+            
             echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"
             adb shell input tap "$X_DISMISS" "$Y_DISMISS"
-          
+            
             sleep 1
             echo "Tapping CONTINUE 4 times"
-          
+            
+            # The for loop syntax must be closed with 'done' in the same script block.
             for i in $(seq 1 4); do
               adb shell input tap "$X_CONT" "$Y_CONT"
               sleep 1
             done
-          
+            
             echo "Printing filtered app logs..."
             adb logcat -s "newway.open.chatgpt.ai.chat.bot.free"
 

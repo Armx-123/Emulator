@@ -10,11 +10,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        # Your 'base-patched.apk' is now available in the workspace root
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        # This ensures ADB is available
 
       - name: Install system image
         run: |
@@ -29,50 +27,6 @@ jobs:
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           
-          # This script handles waiting, installing, launching, tapping, and logging.
-          script: |
-            bash -c 'echo "Waiting for boot completion..."; \
-            adb wait-for-device shell "while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;"; \
-            
-            echo "Installing APK: base-patched.apk"; \
-            # INSTALL the APK from the repo root
-            adb install base-patched.apk; \
-            
-            echo "Launching App (Package: newway.open.chatgpt.ai.chat.bot.free)"; \
-            # LAUNCH the main activity. Assuming the main activity is the default one for the package.
-            # You might need to change '.MainActivity' if your app uses a different main entry point.
-            adb shell am start -n newway.open.chatgpt.ai.chat.bot.free/.MainActivity; \
-            sleep 5; \
-            
-            echo "Detecting emulator resolution..."; \
-            SIZE=$(adb shell wm size | awk "{print \$NF}" | tr -d "\r"); \
-            WIDTH=$(echo "$SIZE" | cut -d"x" -f1); \
-            HEIGHT=$(echo "$SIZE" | cut -d"x" -f2); \
-            
-            if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then echo "Error: Could not determine screen resolution."; exit 1; fi; \
-            
-            echo "Emulator resolution: ${WIDTH}x${HEIGHT}"; \
-            
-            # Calculate coordinates and perform taps
-            X_DISMISS=$((WIDTH * 20 / 100)); \
-            Y_DISMISS=$((HEIGHT * 78 / 100)); \
-            X_CONT=$((WIDTH * 50 / 100)); \
-            Y_CONT=$((HEIGHT * 88 / 100)); \
-            
-            echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"; \
-            adb shell input tap "$X_DISMISS" "$Y_DISMISS"; \
-            
-            sleep 1; \
-            echo "Tapping CONTINUE 4 times"; \
-            
-            for i in $(seq 1 4); do \
-              adb shell input tap "$X_CONT" "$Y_CONT"; \
-              sleep 1; \
-            done; \
-            
-            echo "Printing filtered app logs..."; \
-            # This command will only run for a short time and then finish the step.
-            # If you need to wait longer, you can remove the '-d' option, but it will block the step.
-            adb logcat -s "newway.open.chatgpt.ai.chat.bot.free" -t 50; \
-            
-            echo "Script finished." '
+          # Everything is now on a single line (no '|' needed) to prevent 
+          # any misinterpretation of line breaks or quotes.
+          script: bash -c 'echo "Waiting for boot completion..."; adb wait-for-device shell "while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;"; echo "Installing APK: base-patched.apk"; adb install base-patched.apk; echo "Launching App (Package: newway.open.chatgpt.ai.chat.bot.free)"; adb shell am start -n newway.open.chatgpt.ai.chat.bot.free/.MainActivity; sleep 5; echo "Detecting emulator resolution..."; SIZE=$(adb shell wm size | awk "{print \$NF}" | tr -d "\r"); WIDTH=$(echo "$SIZE" | cut -d"x" -f1); HEIGHT=$(echo "$SIZE" | cut -d"x" -f2); if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then echo "Error: Could not determine screen resolution."; exit 1; fi; echo "Emulator resolution: ${WIDTH}x${HEIGHT}"; X_DISMISS=$((WIDTH * 20 / 100)); Y_DISMISS=$((HEIGHT * 78 / 100)); X_CONT=$((WIDTH * 50 / 100)); Y_CONT=$((HEIGHT * 88 / 100)); echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"; adb shell input tap "$X_DISMISS" "$Y_DISMISS"; sleep 1; echo "Tapping CONTINUE 4 times"; for i in $(seq 1 4); do adb shell input tap "$X_CONT" "$Y_CONT"; sleep 1; done; echo "Printing filtered app logs..."; adb logcat -s "newway.open.chatgpt.ai.chat.bot.free" -t 50; echo "Script finished."'

@@ -16,9 +16,39 @@ jobs:
 
       - name: Install system image
         run: |
+          # Use google_apis for Play Store dependencies
           sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;google_apis;x86" --verbose
 
+      - name: Find Launch Activity Name from APK
+        id: find_activity
+        # The build-tools version needs to be specified. We'll use the latest available in the platform-tools path.
+        run: |
+          # Find the path to the latest build-tools and aapt
+          BUILD_TOOLS_DIR=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
+          AAPT_PATH="$BUILD_TOOLS_DIR/aapt"
+          
+          echo "Using AAPT path: $AAPT_PATH"
+          
+          # Run aapt dump badging on the APK and extract the launchable-activity name.
+          # The result is stored in the 'ACTIVITY_NAME' variable.
+          ACTIVITY_INFO=$("$AAPT_PATH" dump badging base-patched.apk | grep "launchable-activity: name")
+          
+          # Extract only the quoted class name
+          ACTIVITY_NAME=$(echo "$ACTIVITY_INFO" | sed -n "s/.*name='\\([^']\\+\\).*/\\1/p")
+
+          if [ -z "$ACTIVITY_NAME" ]; then
+            echo "Error: Could not find launchable-activity in APK manifest."
+            exit 1
+          fi
+          
+          echo "::set-output name=activity_name::$ACTIVITY_NAME"
+          echo "Found Activity: $ACTIVITY_NAME"
+          
       - name: Create Emulator Control Script
+        # Use the output variable from the previous step
+        env:
+          ACTIVITY_NAME: ${{ steps.find_activity.outputs.activity_name }}
+          PACKAGE_NAME: newway.open.chatgpt.ai.chat.bot.free
         run: |
           cat << 'EOF' > emulator_script.sh
           #!/bin/bash
@@ -28,9 +58,9 @@ jobs:
           echo "Waiting for boot completion..."
           adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
           
-          echo "Launching App (Package: newway.open.chatgpt.ai.chat.bot.free)"
-          # We launch immediately after the device is ready, assuming the action installed the APK.
-          adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
+          echo "Launching App (Package: ${PACKAGE_NAME}) with Activity: ${ACTIVITY_NAME}"
+          # Use the dynamically found Activity name for the precise launch command
+          adb shell am start -n "${PACKAGE_NAME}/${ACTIVITY_NAME}"
           sleep 5 
           
           echo "Detecting emulator resolution..."
@@ -67,7 +97,7 @@ jobs:
           adb pull /sdcard/screenshot.png ./screenshot.png 
           
           echo "Printing filtered app logs..."
-          adb logcat -s "newway.open.chatgpt.ai.chat.bot.free" -t 50
+          adb logcat -s "${PACKAGE_NAME}" -t 50
           echo "Script execution complete."
           EOF
           chmod +x emulator_script.sh
@@ -80,10 +110,7 @@ jobs:
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
-          
-          # NEW: Use the dedicated parameter for APK installation
           apk-path: base-patched.apk 
-          
           script: ./emulator_script.sh
           
       - name: Upload Debug Screenshot

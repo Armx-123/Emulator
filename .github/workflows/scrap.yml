@@ -16,12 +16,10 @@ jobs:
 
       - name: Install system image
         run: |
-          # Use google_apis for Play Store dependencies
           sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;google_apis;x86" --verbose
 
       - name: Find Launch Activity Name from APK
         id: find_activity
-        # The build-tools version needs to be specified. We'll use the latest available in the platform-tools path.
         run: |
           # Find the path to the latest build-tools and aapt
           BUILD_TOOLS_DIR=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
@@ -30,7 +28,6 @@ jobs:
           echo "Using AAPT path: $AAPT_PATH"
           
           # Run aapt dump badging on the APK and extract the launchable-activity name.
-          # The result is stored in the 'ACTIVITY_NAME' variable.
           ACTIVITY_INFO=$("$AAPT_PATH" dump badging base-patched.apk | grep "launchable-activity: name")
           
           # Extract only the quoted class name
@@ -41,11 +38,13 @@ jobs:
             exit 1
           fi
           
-          echo "::set-output name=activity_name::$ACTIVITY_NAME"
+          # *** CORRECTED OUTPUT SETTING (modern GitHub Actions method) ***
+          echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
+          
           echo "Found Activity: $ACTIVITY_NAME"
           
       - name: Create Emulator Control Script
-        # Use the output variable from the previous step
+        # Variables correctly accessed here
         env:
           ACTIVITY_NAME: ${{ steps.find_activity.outputs.activity_name }}
           PACKAGE_NAME: newway.open.chatgpt.ai.chat.bot.free
@@ -58,8 +57,8 @@ jobs:
           echo "Waiting for boot completion..."
           adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
           
+          # Variables used correctly in the shell script
           echo "Launching App (Package: ${PACKAGE_NAME}) with Activity: ${ACTIVITY_NAME}"
-          # Use the dynamically found Activity name for the precise launch command
           adb shell am start -n "${PACKAGE_NAME}/${ACTIVITY_NAME}"
           sleep 5 
           

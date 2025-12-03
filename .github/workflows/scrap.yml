@@ -1,88 +1,59 @@
-name: Android Emulator with Mitmproxy
+name: Run APK in Emulator
 
 on:
   workflow_dispatch:
 
 jobs:
-  run_emulator:
+  android:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-      with:
-        lfs: true   # download APK via LFS
+    - name: Checkout
+      uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Create AVD
       run: |
-        sudo apt update
-        sudo apt install -y python3-pip wget unzip libvirt-clients libvirt-daemon-system qemu-kvm
-        pip install mitmproxy
+        yes "no" | avdmanager create avd \
+          --name test \
+          --package "system-images;android-30;google_apis;x86_64" \
+          --device "Nexus 6"
 
-    - name: Download & set up Android SDK
-      uses: reactivecircus/android-emulator-runner@v2
-      with:
-        api-level: 30
-        target: google_apis
-        arch: x86_64
-        script: |
-          echo "Emulator started"
+    - name: Start emulator
+      run: |
+        nohup emulator -avd test \
+          -no-window \
+          -gpu swiftshader_indirect \
+          -no-snapshot \
+          -noaudio \
+          -no-boot-anim \
+          > /dev/null 2>&1 &
+        sleep 8
 
-          echo "Waiting for device to come online..."
-          adb wait-for-device
-        
-          BOOT_COMPLETE=""
-          until [ "$BOOT_COMPLETE" = "1" ]; do
-            sleep 2
-            BOOT_COMPLETE=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            echo "Boot status: $BOOT_COMPLETE"
-          done
-          echo "Device booted."
-        
-          # Install your APK
-          adb install -r base-patched.apk
-        
-          # Install mitmproxy certificate
-          mitmproxy --quiet --save-stream-file capture.mitm &
-          sleep 5
-        
-          cp ~/.mitmproxy/mitmproxy-ca-cert.pem mitm.pem
-          adb push mitm.pem /sdcard/
-        
-          # Make system partition writable
-          adb root
-          adb remount
-        
-          adb shell cp /sdcard/mitm.pem /system/etc/security/cacerts/
-          adb shell chmod 644 /system/etc/security/cacerts/mitm.pem
-          adb reboot
-        
-          echo "Rebooting after certificate install..."
-          adb wait-for-device
-        
-          BOOT_COMPLETE=""
-          until [ "$BOOT_COMPLETE" = "1" ]; do
-            sleep 2
-            BOOT_COMPLETE=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            echo "Reboot boot status: $BOOT_COMPLETE"
-          done
-        
-          # Enable HTTP proxy
-          adb shell settings put global http_proxy 127.0.0.1:8080
-        
-          # Loop 10 times
-          for i in {1..10}
-          do
-            echo "Iteration $i"
-            adb shell pm clear newway.open.chatgpt.ai.chat.bot.free
-            adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
-            sleep 20
-          done
+    - name: Wait for boot
+      run: |
+        adb wait-for-device
+        for i in {1..45}; do
+          booted=$(adb shell getprop sys.boot_completed 2>/dev/null)
+          if [[ "$booted" == "1" ]]; then
+            echo "Emulator ready."
+            exit 0
+          fi
+          echo "Booting emulator ($i)..."
+          sleep 4
+        done
+        echo "Emulator failed to boot."
+        exit 1
 
+    - name: Install APK
+      run: adb install base-patched.apk
 
-    - name: Upload mitmproxy capture
-      uses: actions/upload-artifact@v4
-      with:
-        name: traffic-log
-        path: capture.mitm
+    - name: Launch App
+      run: |
+        # Replace with your actual package name
+        adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
+
+    - name: Print logcat
+      run: adb logcat -d

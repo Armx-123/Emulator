@@ -21,16 +21,12 @@ jobs:
       - name: Find Launch Activity Name from APK
         id: find_activity
         run: |
-          # Find the path to the latest build-tools and aapt
           BUILD_TOOLS_DIR=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
           AAPT_PATH="$BUILD_TOOLS_DIR/aapt"
           
           echo "Using AAPT path: $AAPT_PATH"
           
-          # Run aapt dump badging on the APK and extract the launchable-activity name.
           ACTIVITY_INFO=$("$AAPT_PATH" dump badging base-patched.apk | grep "launchable-activity: name")
-          
-          # Extract only the quoted class name
           ACTIVITY_NAME=$(echo "$ACTIVITY_INFO" | sed -n "s/.*name='\\([^']\\+\\).*/\\1/p")
 
           if [ -z "$ACTIVITY_NAME" ]; then
@@ -38,55 +34,58 @@ jobs:
             exit 1
           fi
           
-          # *** CORRECTED OUTPUT SETTING (modern GitHub Actions method) ***
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
-          
           echo "Found Activity: $ACTIVITY_NAME"
           
       - name: Create Emulator Control Script
-        # Variables correctly accessed here
+        # Pass variables as environment variables
         env:
           ACTIVITY_NAME: ${{ steps.find_activity.outputs.activity_name }}
           PACKAGE_NAME: newway.open.chatgpt.ai.chat.bot.free
         run: |
-          cat << 'EOF' > emulator_script.sh
+          # Define local variables for cleaner injection
+          APP_ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
+          APP_PACKAGE="${{ env.PACKAGE_NAME }}"
+          
+          # Use EOF (without quotes) to allow variable substitution
+          cat << EOF > emulator_script.sh
           #!/bin/bash
           set -e
 
           echo "APK is installed by the runner action parameter."
           echo "Waiting for boot completion..."
-          adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
+          adb wait-for-device shell 'while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;'
           
-          # Variables used correctly in the shell script
-          echo "Launching App (Package: ${PACKAGE_NAME}) with Activity: ${ACTIVITY_NAME}"
-          adb shell am start -n "${PACKAGE_NAME}/${ACTIVITY_NAME}"
+          # Launch command with injected variables
+          echo "Launching App (Package: ${APP_PACKAGE}) with Activity: ${APP_ACTIVITY}"
+          adb shell am start -n "${APP_PACKAGE}/${APP_ACTIVITY}"
           sleep 5 
           
           echo "Detecting emulator resolution..."
-          SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
-          WIDTH=$(echo "$SIZE" | cut -d'x' -f1)
-          HEIGHT=$(echo "$SIZE" | cut -d'x' -f2)
+          SIZE=\$(adb shell wm size | awk '{print \$NF}' | tr -d '\r')
+          WIDTH=\$(echo "\$SIZE" | cut -d'x' -f1)
+          HEIGHT=\$(echo "\$SIZE" | cut -d'x' -f2)
           
-          if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
+          if [ -z "\$WIDTH" ] || [ -z "\$HEIGHT" ]; then
             echo "Error: Could not determine screen resolution."
             exit 1
           fi
 
-          echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
+          echo "Emulator resolution: \${WIDTH}x\${HEIGHT}"
           
-          X_DISMISS=$((WIDTH * 20 / 100))
-          Y_DISMISS=$((HEIGHT * 78 / 100))
-          X_CONT=$((WIDTH * 50 / 100))
-          Y_CONT=$((HEIGHT * 88 / 100))
+          X_DISMISS=\$((WIDTH * 20 / 100))
+          Y_DISMISS=\$((HEIGHT * 78 / 100))
+          X_CONT=\$((WIDTH * 50 / 100))
+          Y_CONT=\$((HEIGHT * 88 / 100))
           
-          echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"
-          adb shell input tap "$X_DISMISS" "$Y_DISMISS"
+          echo "Tapping DISMISS at \${X_DISMISS},\${Y_DISMISS}"
+          adb shell input tap "\$X_DISMISS" "\$Y_DISMISS"
           
           sleep 1
           echo "Tapping CONTINUE 4 times"
           
-          for i in $(seq 1 4); do
-            adb shell input tap "$X_CONT" "$Y_CONT"
+          for i in \$(seq 1 4); do
+            adb shell input tap "\$X_CONT" "\$Y_CONT"
             sleep 1
           done
           
@@ -96,7 +95,7 @@ jobs:
           adb pull /sdcard/screenshot.png ./screenshot.png 
           
           echo "Printing filtered app logs..."
-          adb logcat -s "${PACKAGE_NAME}" -t 50
+          adb logcat -s "${APP_PACKAGE}" -t 50
           echo "Script execution complete."
           EOF
           chmod +x emulator_script.sh

@@ -19,23 +19,21 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;default;x86" --verbose
 
       - name: Create Emulator Control Script
-        # This step uses a clean shell to create the script file
         run: |
           cat << 'EOF' > emulator_script.sh
           #!/bin/bash
-          set -e # Exit immediately if a command exits with a non-zero status.
+          set -e
 
           echo "Waiting for boot completion..."
-          # This command is now safe inside a normal bash script
           adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
 
           echo "Installing APK: base-patched.apk"
           adb install base-patched.apk
           
           echo "Launching App (Package: newway.open.chatgpt.ai.chat.bot.free)"
-          # NOTE: If '.MainActivity' is wrong, this is the line to change.
-          adb shell am start -n newway.open.chatgpt.ai.chat.bot.free/.MainActivity
-          sleep 5 # Give the app a moment to load and show the first screen
+          # FIX: Use 'monkey' to reliably launch the default activity for the package
+          adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
+          sleep 5 
           
           echo "Detecting emulator resolution..."
           SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
@@ -49,7 +47,6 @@ jobs:
 
           echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
           
-          # Calculate coordinates
           X_DISMISS=$((WIDTH * 20 / 100))
           Y_DISMISS=$((HEIGHT * 78 / 100))
           X_CONT=$((WIDTH * 50 / 100))
@@ -66,11 +63,16 @@ jobs:
             sleep 1
           done
           
+          # --- SCREENSHOT CAPTURE ---
+          echo "Taking screenshot and pulling artifact..."
+          adb shell screencap /sdcard/screenshot.png
+          adb pull /sdcard/screenshot.png ./screenshot.png # Pulls to the local runner directory
+          
           echo "Printing filtered app logs..."
           adb logcat -s "newway.open.chatgpt.ai.chat.bot.free" -t 50
           echo "Script execution complete."
           EOF
-          chmod +x emulator_script.sh # Make the script executable
+          chmod +x emulator_script.sh
 
       - name: Run emulator, Install App, and Control
         uses: reactivecircus/android-emulator-runner@v2
@@ -80,5 +82,12 @@ jobs:
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
-          # EXECUTE THE EXTERNAL SCRIPT FILE
           script: ./emulator_script.sh
+          
+      # --- NEW STEP: UPLOAD ARTIFACT ---
+      - name: Upload Debug Screenshot
+        uses: actions/upload-artifact@v3
+        if: always() # Upload artifact even if the previous step failed
+        with:
+          name: emulator-screenshot
+          path: screenshot.png

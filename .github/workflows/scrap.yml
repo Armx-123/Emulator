@@ -1,72 +1,71 @@
-name: Intercept Android App Traffic (Long Running)
+name: Android Emulator with Mitmproxy
 
 on:
   workflow_dispatch:
 
 jobs:
-  intercept:
+  run_emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Maximum allowed by GitHub (6 hours)
+    timeout-minutes: 120
 
     steps:
-    - name: Checkout Repo
-      uses: actions/checkout@v3
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        lfs: true   # download APK via LFS
 
-    - name: Install Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Create and Start Emulator
+    - name: Install dependencies
       run: |
-        sdkmanager --install "system-images;android-30;google_apis;x86_64"
-        echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" --device "pixel"
-        nohup emulator -avd test -no-audio -no-window -gpu swiftshader_indirect &
-        adb wait-for-device
-        adb devices
+        sudo apt update
+        sudo apt install -y python3-pip wget unzip libvirt-clients libvirt-daemon-system qemu-kvm
+        pip install mitmproxy
 
-    - name: Install mitmproxy
-      run: pip install mitmproxy
+    - name: Download & set up Android SDK
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 30
+        target: google_apis
+        arch: x86_64
+        script: |
+          echo "Emulator started"
 
-    - name: Start mitmproxy
-      run: |
-        nohup mitmdump -w flows.mitm --listen-port 8080 &
-        sleep 4
+          # Install your APK
+          adb install -r base-patched.apk
 
-    - name: Configure Proxy on Emulator
-      run: adb shell settings put global http_proxy 127.0.0.1:8080
-
-    - name: Copy mitmproxy CA cert to emulator
-      run: |
-        adb push ~/.mitmproxy/mitmproxy-ca-cert.pem /sdcard/Download/mitmproxy-ca-cert.pem
-        # User cert install is normally automatic if the app relies on system CA store
-
-    - name: Main Long-Running Loop
-      run: |
-        for i in $(seq 1 2000)
-        do
-          echo "=========================="
-          echo " Cycle $i starting..."
-          echo "=========================="
-
-          # Clear app data
-          adb shell pm clear com.your.app.package
-
-          # Install APK fresh
-          adb install -r your_app.apk
-
-          # Launch app
-          adb shell monkey -p com.your.app.package -c android.intent.category.LAUNCHER 1
-
-          # Wait for network traffic
+          # Install mitmproxy certificate into Android
+          mitmproxy --quit
+          mkdir -p ~/.mitmproxy
+          mitmproxy --quiet --save-stream-file capture.mitm &
           sleep 5
 
-          # Save flows for this cycle
-          cp flows.mitm flows_$i.mitm
+          # Fetch mitmproxy certificate
+          cp ~/.mitmproxy/mitmproxy-ca-cert.pem mitm.pem
 
-          echo "Cycle $i complete."
-        done
+          # Push certificate to /sdcard and into system cert store
+          adb push mitm.pem /sdcard/
+          adb shell su -c 'mount -o remount,rw /system'
+          adb shell su -c 'cp /sdcard/mitm.pem /system/etc/security/cacerts/'
+          adb shell su -c 'chmod 644 /system/etc/security/cacerts/mitm.pem'
+          adb shell su -c 'mount -o remount,ro /system'
+          adb reboot
+          sleep 30
 
-    - name: Upload all captured flows
-      uses: actions/upload-artifact@v3
+          # Enable proxy inside Android
+          adb shell settings put global http_proxy 127.0.0.1:8080
+
+          echo "Proxy enabled"
+
+          # Loop: clear data → start app → wait → repeat
+          for i in {1..10}
+          do
+            echo "Iteration $i"
+            adb shell pm clear newway.open.chatgpt.ai.chat.bot.free
+            adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
+            sleep 20
+          done
+
+    - name: Upload mitmproxy capture
+      uses: actions/upload-artifact@v4
       with:
-        name: intercepted-traffic
-        path: flows_*.mitm
+        name: traffic-log
+        path: capture.mitm

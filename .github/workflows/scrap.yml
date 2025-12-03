@@ -15,8 +15,9 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install system image
+        # FIX 1: CHANGE 'default' TO 'google_apis'
         run: |
-          sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;default;x86" --verbose
+          sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;google_apis;x86" --verbose
 
       - name: Create Emulator Control Script
         run: |
@@ -31,7 +32,6 @@ jobs:
           adb install base-patched.apk
           
           echo "Launching App (Package: newway.open.chatgpt.ai.chat.bot.free)"
-          # FIX: Use 'monkey' to reliably launch the default activity for the package
           adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
           sleep 5 
           
@@ -66,7 +66,7 @@ jobs:
           # --- SCREENSHOT CAPTURE ---
           echo "Taking screenshot and pulling artifact..."
           adb shell screencap /sdcard/screenshot.png
-          adb pull /sdcard/screenshot.png ./screenshot.png # Pulls to the local runner directory
+          adb pull /sdcard/screenshot.png ./screenshot.png 
           
           echo "Printing filtered app logs..."
           adb logcat -s "newway.open.chatgpt.ai.chat.bot.free" -t 50
@@ -78,14 +78,14 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
-          target: default
+          # FIX 2: CHANGE 'target' TO 'google_apis'
+          target: google_apis 
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           script: ./emulator_script.sh
           
       - name: Upload Debug Screenshot
-        # FIX APPLIED HERE: Changed @v3 to @v4
         uses: actions/upload-artifact@v4
         if: always() 
         with:

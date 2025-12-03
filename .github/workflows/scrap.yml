@@ -10,9 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Using setup-android is optional if you rely solely on the emulator-runner, 
+      # but it ensures ADB and SDK are generally available.
       - uses: android-actions/setup-android@v3
 
       - name: Install system image
+        # This step is often redundant if 'reactivecircus/android-emulator-runner' is used, 
+        # as it typically handles image installation itself. 
+        # However, keeping it doesn't hurt, but you might simplify by relying on the action.
         run: |
           sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;default;x86" --verbose
 
@@ -24,29 +29,27 @@ jobs:
           arch: x86
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
-          # The script runs in a single shell session.
+          # The script is now a single, cohesive shell block to manage variables correctly
           script: |
             echo "Waiting for boot completion..."
-            # Wait for the emulator to be fully booted
+            # CRITICAL: Wait for the device to be ready before running ADB commands
             adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
 
             echo "Detecting emulator resolution..."
-            # Combine commands with semicolons or ensure they are on separate lines 
-            # within this single script block.
-            # Use a more robust way to capture screen size.
+            # Get screen size robustly (e.g., handles different adb shell outputs)
             SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
             WIDTH=$(echo "$SIZE" | cut -d'x' -f1)
             HEIGHT=$(echo "$SIZE" | cut -d'x' -f2)
             
-            # Check if resolution was successfully captured
+            # Basic validation check
             if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
-              echo "Error: Could not determine screen resolution."
+              echo "Error: Could not determine screen resolution. Check emulator status."
               exit 1
             fi
 
             echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
             
-            # Ensure calculations are safe by checking if variables are numbers
+            # Calculate coordinates
             X_DISMISS=$((WIDTH * 20 / 100))
             Y_DISMISS=$((HEIGHT * 78 / 100))
             
@@ -59,12 +62,12 @@ jobs:
             sleep 1
             echo "Tapping CONTINUE 4 times"
             
-            # The for loop syntax must be closed with 'done' in the same script block.
+            # The entire 'for' loop is contained in this single script block
             for i in $(seq 1 4); do
               adb shell input tap "$X_CONT" "$Y_CONT"
               sleep 1
             done
             
             echo "Printing filtered app logs..."
+            # Note: Ensure the package name is correct for your application's logs
             adb logcat -s "newway.open.chatgpt.ai.chat.bot.free"
-

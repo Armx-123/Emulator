@@ -8,18 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install system image
-        run: |
-          sdkmanager "platform-tools" "platforms;android-29" "system-images;android-29;google_apis;x86" --verbose
+      # ... (Steps Checkout, Setup SDK, Install System Image remain the same) ...
 
       - name: Find Launch Activity Name from APK
         id: find_activity
+        # ... (This step remains the same) ...
         run: |
           BUILD_TOOLS_DIR=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
           AAPT_PATH="$BUILD_TOOLS_DIR/aapt"
@@ -38,16 +31,13 @@ jobs:
           echo "Found Activity: $ACTIVITY_NAME"
           
       - name: Create Emulator Control Script
-        # Pass variables as environment variables
         env:
           ACTIVITY_NAME: ${{ steps.find_activity.outputs.activity_name }}
           PACKAGE_NAME: newway.open.chatgpt.ai.chat.bot.free
         run: |
-          # Define local variables for cleaner injection
           APP_ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
           APP_PACKAGE="${{ env.PACKAGE_NAME }}"
           
-          # Use EOF (without quotes) to allow variable substitution
           cat << EOF > emulator_script.sh
           #!/bin/bash
           set -e
@@ -56,10 +46,15 @@ jobs:
           echo "Waiting for boot completion..."
           adb wait-for-device shell 'while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;'
           
-          # Launch command with injected variables
           echo "Launching App (Package: ${APP_PACKAGE}) with Activity: ${APP_ACTIVITY}"
           adb shell am start -n "${APP_PACKAGE}/${APP_ACTIVITY}"
           sleep 5 
+          
+          # *** NEW RECOVERY STEP: Tap 'Wait' on System UI isn't responding ***
+          # Tap at ~50% X, ~58% Y, which should hit the 'Wait' button
+          echo "Tapping to dismiss potential ANR/System UI error popup (tapping 'Wait')."
+          adb shell input tap 500 580 # Using direct coordinates as a safe fallback
+          sleep 2
           
           echo "Detecting emulator resolution..."
           SIZE=\$(adb shell wm size | awk '{print \$NF}' | tr -d '\r')

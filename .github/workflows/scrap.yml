@@ -23,8 +23,14 @@ jobs:
           target: default
           arch: x86
           force-avd-creation: true
-          emulator-options: "-no-window -noaudio -no-boot-anim"
+          emulator-options: "-no-window -no-audio -no-boot-anim"
           script: |
+            # Install your APK
             adb install base-patched.apk
+
+            # Launch your app
             adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
-            adb logcat -d
+
+            # Print ONLY your app logs
+            echo "---- FILTERED APP LOGS ----"
+            adb logcat -d | grep -i "newway.open.chatgpt.ai.chat.bot.free" || echo "No app-specific logs found."

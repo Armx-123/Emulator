@@ -27,43 +27,7 @@ jobs:
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           
-          # Use a Here-Document (<< 'EOF' ... EOF) for reliable multi-line script execution
+          # This entire script is now wrapped in 'bash -c' and concatenated with semicolons
+          # to ensure it runs as a single shell process, resolving all syntax errors.
           script: |
-            /bin/bash << 'EOF'
-            
-            echo "Waiting for boot completion..."
-            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
-
-            echo "Detecting emulator resolution..."
-            
-            SIZE=$(adb shell wm size | awk '{print $NF}' | tr -d '\r')
-            WIDTH=$(echo "$SIZE" | cut -d'x' -f1)
-            HEIGHT=$(echo "$SIZE" | cut -d'x' -f2)
-            
-            if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
-              echo "Error: Could not determine screen resolution. Check emulator status."
-              exit 1
-            fi
-
-            echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
-            
-            X_DISMISS=$((WIDTH * 20 / 100))
-            Y_DISMISS=$((HEIGHT * 78 / 100))
-            X_CONT=$((WIDTH * 50 / 100))
-            Y_CONT=$((HEIGHT * 88 / 100))
-            
-            echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"
-            adb shell input tap "$X_DISMISS" "$Y_DISMISS"
-            
-            sleep 1
-            echo "Tapping CONTINUE 4 times"
-            
-            for i in $(seq 1 4); do
-              adb shell input tap "$X_CONT" "$Y_CONT"
-              sleep 1
-            done
-            
-            echo "Printing filtered app logs..."
-            adb logcat -s "newway.open.chatgpt.ai.chat.bot.free"
-            
-            EOF
+            bash -c 'echo "Waiting for boot completion..."; adb wait-for-device shell "while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;"; echo "Detecting emulator resolution..."; SIZE=$(adb shell wm size | awk "{print \$NF}" | tr -d "\r"); WIDTH=$(echo "$SIZE" | cut -d"x" -f1); HEIGHT=$(echo "$SIZE" | cut -d"x" -f2); if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then echo "Error: Could not determine screen resolution."; exit 1; fi; echo "Emulator resolution: ${WIDTH}x${HEIGHT}"; X_DISMISS=$((WIDTH * 20 / 100)); Y_DISMISS=$((HEIGHT * 78 / 100)); X_CONT=$((WIDTH * 50 / 100)); Y_CONT=$((HEIGHT * 88 / 100)); echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"; adb shell input tap "$X_DISMISS" "$Y_DISMISS"; sleep 1; echo "Tapping CONTINUE 4 times"; for i in $(seq 1 4); do adb shell input tap "$X_CONT" "$Y_CONT"; sleep 1; done; echo "Printing filtered app logs..."; adb logcat -s "newway.open.chatgpt.ai.chat.bot.free"'

@@ -25,36 +25,31 @@ jobs:
           force-avd-creation: true
           emulator-options: "-no-window -noaudio -no-boot-anim"
           script: |
-            # Install APK
             adb install base-patched.apk
 
             # Launch app
             adb shell monkey -p newway.open.chatgpt.ai.chat.bot.free -c android.intent.category.LAUNCHER 1
 
-            # Read emulator resolution
-            RES=$(adb shell wm size | grep -oE "[0-9]+x[0-9]+")
-            WIDTH=$(echo $RES | cut -d'x' -f1)
-            HEIGHT=$(echo $RES | cut -d'x' -f2)
-            echo "Emulator resolution: ${WIDTH}x${HEIGHT}"
+            # FIXED emulator resolution
+            WIDTH=1080
+            HEIGHT=1920
 
-            # Calculate relative tap coordinates
-            # DISMISS button (~20% from left, 78% from top)
+            # Relative tap positions
             X_DISMISS=$((WIDTH * 20 / 100))
             Y_DISMISS=$((HEIGHT * 78 / 100))
 
-            # CONTINUE button (~50% from left, 88% from top)
             X_CONT=$((WIDTH * 50 / 100))
             Y_CONT=$((HEIGHT * 88 / 100))
 
-            echo "Tap DISMISS at $X_DISMISS,$Y_DISMISS"
+            echo "Tapping DISMISS at $X_DISMISS,$Y_DISMISS"
             adb shell input tap $X_DISMISS $Y_DISMISS
             sleep 1
 
-            echo "Tap CONTINUE 4 times"
-            for i in {1..4}; do
+            echo "Tapping CONTINUE 4 times"
+            for i in $(seq 1 4); do
               adb shell input tap $X_CONT $Y_CONT
               sleep 1
             done
 
-            echo "Captured app logs:"
+            echo "App logs:"
             adb logcat -d | grep -i "newway.open.chatgpt.ai.chat.bot.free" || true

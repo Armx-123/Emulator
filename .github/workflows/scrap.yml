@@ -19,7 +19,7 @@ jobs:
       - name: Install Interception Tools
         run: |
           pip install mitmproxy
-          # Start mitmdump in background to catch all queries
+          # Start mitmdump in background
           mitmdump -w network_traffic.mitm & 
           echo "Proxy server active on port 8080"
 
@@ -34,7 +34,6 @@ jobs:
 
           ACTIVITY_NAME=$($AAPT2_PATH dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
-          echo "Target Activity: $ACTIVITY_NAME"
 
       - name: Create Interaction Script
         run: |
@@ -46,71 +45,71 @@ jobs:
 
           echo "Waiting for boot completion..."
           adb wait-for-device
-          for i in {1..60}; do
-            BOOT_STATE=$(adb shell getprop sys.boot_completed | tr -d '\r')
-            if [ "$BOOT_STATE" == "1" ]; then
-              echo "Boot Completed!"
-              break
-            fi
+          # Simple check for boot property
+          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]; do
             sleep 5
           done
+          
+          echo "Booted. Letting system settle for 10s..."
+          sleep 10
 
-          # --- FIX FOR 'SYSTEM UI ISN'T RESPONDING' ---
-          echo "Clearing system dialogs (Tapping 'Wait' and Back button)..."
-          # Tap roughly where the 'Wait' button appears in your screenshot
-          adb shell input tap 500 600 
+          echo "Clearing system dialogs..."
+          adb shell input tap 500 600 # Tap 'Wait'
           sleep 2
-          # Press BACK to ensure any other overlays are dismissed
-          adb shell input keyevent 4
+          adb shell input keyevent 4   # Press Back
           sleep 1
 
-          echo "Force-starting the app..."
-          # -S force-stops the app before starting to ensure a clean state
+          echo "Starting App: $PACKAGE_NAME"
           adb shell am start -S -n "$PACKAGE_NAME/$ACTIVITY"
           
-          echo "Allowing 20s for app to load..."
+          echo "Waiting for app load..."
           sleep 20
 
-          # --- DEBUG: CHECK WHAT IS ON SCREEN ---
-          echo "Current Focused Window:"
+          echo "Current Window Focus:"
           adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'
 
-          echo "Performing UI automated taps..."
-          # Adjust these coordinates if your app's buttons are in different spots
-          adb shell input tap 200 800 # Likely 'Dismiss' or 'Skip'
+          echo "Executing Challenge UI Taps..."
+          adb shell input tap 200 800 
           sleep 3
-          
           for i in {1..4}; do
-            echo "Tap Continue iteration $i"
             adb shell input tap 500 900 
             sleep 2
           done
 
-          echo "Capturing final state..."
+          echo "Capturing proof..."
           adb shell screencap /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
           
-          echo "Challenge script finished."
+          echo "Dumping logcat for debug..."
+          adb logcat -d > emulator_logs.log
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator (High Performance Mode)
+      - name: Run Emulator (Optimized Resources)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 28
           target: google_apis
           arch: x86_64
           force-avd-creation: true
-          # Increased RAM and added swiftshader for better stability in CI
-          emulator-options: "-no-window -no-audio -no-boot-anim -memory 2048 -http-proxy http://127.0.0.1:8080 -gpu swiftshader_indirect"
+          # Memory 1536 is the 'Goldilocks' zone for Ubuntu runners to avoid OOM 137
+          emulator-options: >
+            -no-window 
+            -no-audio 
+            -no-boot-anim 
+            -memory 1536 
+            -http-proxy http://127.0.0.1:8080 
+            -gpu swiftshader_indirect 
+            -prop dalvik.vm.heapsize=256m
           disable-animations: true
           script: ./emulator_script.sh
 
-      - name: Upload Results
+      - name: Upload Results & Debug Logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: challenge-results
+          name: challenge-final-results
           path: |
             final_screenshot.png
             network_traffic.mitm
+            emulator_logs.log

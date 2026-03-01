@@ -5,8 +5,9 @@ on:
 
 jobs:
   run-challenge:
-    runs-on: ubuntu-latest 
-    
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # Don't let it run for 30+ mins anymore
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -36,80 +37,67 @@ jobs:
 
           echo "Waiting for boot..."
           adb wait-for-device
-          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]; do sleep 5; done
           
-          # --- SSL CERTIFICATE INJECTION ---
-          echo "Generating and Installing mitmproxy Certificate..."
-          mitmdump &
-          MITM_PID=$!
-          sleep 5
-          kill $MITM_PID
-
-          # Push cert to device and trigger installation prompt
-          adb push ~/.mitmproxy/mitmproxy-ca-cert.cer /sdcard/
-          adb shell am start -a android.intent.action.VIEW \
-            -d "file:///sdcard/mitmproxy-ca-cert.cer" \
-            -t "application/x-x509-ca-cert"
-          sleep 3
-          # Click 'OK' on the certificate installer (Standard coordinates for API 27)
-          adb shell input tap 900 1700 
+          # Start mitmdump in background immediately
+          mitmdump -w network_traffic.mitm --set block_global=false &
           
-          # Restart proxy for actual capture
-          mitmdump -w network_traffic.mitm &
-          # ---------------------------------
-
-          echo "Dismissing System UI hang..."
-          adb shell input keyevent 4 # The 'Back' button dismisses the unresponsive dialog
+          # Wait for boot property
+          timeout 300s adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 5; done;'
+          
+          echo "Booted. Dismissing system overlays..."
+          sleep 10
+          # Brute force dismiss: Back, Back, Enter
+          adb shell input keyevent 4
           sleep 2
+          adb shell input keyevent 4
+          sleep 2
+          adb shell input keyevent 66 
 
-          echo "Launching App: $PACKAGE_NAME"
+          echo "Force-starting the app..."
           adb shell am start -S -n "$PACKAGE_NAME/$ACTIVITY"
           
-          echo "Waiting for app load..."
-          sleep 25
+          echo "Waiting for app load (30s)..."
+          sleep 30
 
-          echo "Executing UI Interactions..."
-          # Dismiss any initial app-level popups
-          adb shell input tap 200 800 
-          sleep 5
+          echo "Performing Brute-Force UI Taps..."
+          # Instead of precise taps, we tap likely locations for 'Continue/Next'
+          adb shell input tap 540 1600 # Lower middle
+          sleep 3
+          adb shell input tap 540 1800 # Very bottom middle
+          sleep 3
           
-          # Loop through the 'Continue' sequence
-          for i in {1..4}; do
-            echo "Tap iteration $i"
-            adb shell input tap 540 1750 # Tapping bottom-center
-            sleep 3
-          done
-
-          echo "Capturing Results..."
+          # Final Screenshot
+          echo "Capturing screenshot..."
           adb shell screencap -p /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
+          
+          echo "Pulling logs..."
           adb logcat -d > app_debug.log
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator (Optimized for SSL & RAM)
+      - name: Run Emulator (Fast Boot)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 27
           target: google_apis
           arch: x86
           force-avd-creation: true
-          # Keep RAM at 1280 to prevent OOM 137
+          # Reduced options to the bare essentials to prevent hanging
           emulator-options: >
             -no-window 
             -no-audio 
             -no-boot-anim 
-            -memory 1280 
-            -http-proxy http://127.0.0.1:8080 
-            -gpu swiftshader_indirect
+            -memory 1536 
+            -http-proxy http://127.0.0.1:8080
           disable-animations: true
           script: ./emulator_script.sh
 
-      - name: Upload Challenge Evidence
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: interception-results
+          name: challenge-evidence
           path: |
             final_screenshot.png
             network_traffic.mitm

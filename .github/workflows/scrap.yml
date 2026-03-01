@@ -1,4 +1,4 @@
-name: Mobile App Interception Challenge
+name: Mobile App Interception
 
 on:
   workflow_dispatch:
@@ -16,100 +16,89 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Interception Tools
-        run: |
-          pip install mitmproxy
-          # Start mitmdump in background
-          mitmdump -w network_traffic.mitm & 
-          echo "Proxy server active on port 8080"
+      - name: Install mitmproxy
+        run: pip install mitmproxy
 
       - name: Extract Launch Activity
         id: find_activity
         run: |
           BUILD_TOOLS=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
-          AAPT2_PATH="$BUILD_TOOLS/aapt2"
           APK_PATH="./base-patched.apk"
-          
-          if [ ! -f "$APK_PATH" ]; then echo "APK Missing"; exit 1; fi
-
-          ACTIVITY_NAME=$($AAPT2_PATH dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
+          ACTIVITY_NAME=$("$BUILD_TOOLS/aapt2" dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create Interaction Script
         run: |
           cat << 'EOF' > emulator_script.sh
           #!/bin/bash
-          set -e
+          # No 'set -e' here so a single failed tap doesn't kill the whole run
+          
           PACKAGE_NAME="newway.open.chatgpt.ai.chat.bot.free"
           ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
 
-          echo "Waiting for boot completion..."
+          echo "Waiting for boot..."
           adb wait-for-device
-          # Simple check for boot property
-          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]; do
-            sleep 5
-          done
           
-          echo "Booted. Letting system settle for 10s..."
-          sleep 10
+          # Start mitmdump only NOW to save idle RAM
+          mitmdump -w network_traffic.mitm & 
+          
+          # Wait for the property to hit 1
+          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == "1" ]; do sleep 5; done
+          
+          echo "Settling..."
+          sleep 15
 
-          echo "Clearing system dialogs..."
-          adb shell input tap 500 600 # Tap 'Wait'
+          echo "Bypassing System UI Overlays..."
+          # Use keyevents instead of taps where possible (lighter on CPU)
+          adb shell input keyevent 4 # Back button
           sleep 2
-          adb shell input keyevent 4   # Press Back
-          sleep 1
+          adb shell input keyevent 82 # Menu/Unlock
+          sleep 2
 
-          echo "Starting App: $PACKAGE_NAME"
+          echo "Launching App..."
           adb shell am start -S -n "$PACKAGE_NAME/$ACTIVITY"
-          
-          echo "Waiting for app load..."
-          sleep 20
+          sleep 25
 
-          echo "Current Window Focus:"
-          adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'
-
-          echo "Executing Challenge UI Taps..."
+          echo "Automated Interactions..."
+          # We use generic percentages/coordinates for a standard 1080x1920
           adb shell input tap 200 800 
-          sleep 3
+          sleep 5
           for i in {1..4}; do
-            adb shell input tap 500 900 
-            sleep 2
+            adb shell input tap 540 1700 # Tap bottom center (Continue)
+            sleep 3
           done
 
-          echo "Capturing proof..."
-          adb shell screencap /sdcard/screenshot.png
+          echo "Capturing Final Proof..."
+          adb shell screencap -p /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
-          
-          echo "Dumping logcat for debug..."
-          adb logcat -d > emulator_logs.log
+          adb logcat -d > emulator.log
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator (Optimized Resources)
+      - name: Run Emulator (Ultra-Light Config)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 28
+          api-level: 27 # API 27 is the 'Lightweight' king for CI
           target: google_apis
-          arch: x86_64
+          arch: x86
           force-avd-creation: true
-          # Memory 1536 is the 'Goldilocks' zone for Ubuntu runners to avoid OOM 137
+          # Dropped to 1280MB RAM to ensure the Runner never hits OOM 137
           emulator-options: >
             -no-window 
             -no-audio 
             -no-boot-anim 
-            -memory 1536 
+            -memory 1280 
             -http-proxy http://127.0.0.1:8080 
-            -gpu swiftshader_indirect 
-            -prop dalvik.vm.heapsize=256m
+            -gpu swiftshader_indirect
           disable-animations: true
           script: ./emulator_script.sh
 
-      - name: Upload Results & Debug Logs
+      - name: Upload All Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: challenge-final-results
+          name: challenge-debug-pack
           path: |
-            final_screenshot.png
-            network_traffic.mitm
-            emulator_logs.log
+            *.png
+            *.mitm
+            *.log

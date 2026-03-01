@@ -6,11 +6,23 @@ on:
 jobs:
   run-challenge:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # Don't let it run for 30+ mins anymore
+    timeout-minutes: 20
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Set up Node.js (for APK patching)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Patch APK to Trust Proxy
+        run: |
+          # This tool automatically modifies the APK to trust user certificates
+          npx apk-mitm base-patched.apk --patch-level compatibility
+          # The tool creates a file named 'base-patched-patched.apk'
+          mv base-patched-patched.apk final-app.apk
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -24,8 +36,7 @@ jobs:
         id: find_activity
         run: |
           BUILD_TOOLS=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
-          APK_PATH="./base-patched.apk"
-          ACTIVITY_NAME=$("$BUILD_TOOLS/aapt2" dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
+          ACTIVITY_NAME=$("$BUILD_TOOLS/aapt2" dump badging "./final-app.apk" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create Interaction Script
@@ -37,67 +48,52 @@ jobs:
 
           echo "Waiting for boot..."
           adb wait-for-device
-          
-          # Start mitmdump in background immediately
           mitmdump -w network_traffic.mitm --set block_global=false &
           
-          # Wait for boot property
           timeout 300s adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 5; done;'
           
-          echo "Booted. Dismissing system overlays..."
+          echo "Clearing overlays..."
           sleep 10
-          # Brute force dismiss: Back, Back, Enter
-          adb shell input keyevent 4
-          sleep 2
           adb shell input keyevent 4
           sleep 2
           adb shell input keyevent 66 
 
-          echo "Force-starting the app..."
+          echo "Launching Patched App..."
           adb shell am start -S -n "$PACKAGE_NAME/$ACTIVITY"
-          
-          echo "Waiting for app load (30s)..."
           sleep 30
 
-          echo "Performing Brute-Force UI Taps..."
-          # Instead of precise taps, we tap likely locations for 'Continue/Next'
-          adb shell input tap 540 1600 # Lower middle
+          echo "Performing UI Taps..."
+          adb shell input tap 540 1600 
           sleep 3
-          adb shell input tap 540 1800 # Very bottom middle
+          adb shell input tap 540 1800 
           sleep 3
           
-          # Final Screenshot
-          echo "Capturing screenshot..."
           adb shell screencap -p /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
-          
-          echo "Pulling logs..."
           adb logcat -d > app_debug.log
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator (Fast Boot)
+      - name: Run Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 27
           target: google_apis
           arch: x86
           force-avd-creation: true
-          # Reduced options to the bare essentials to prevent hanging
           emulator-options: >
-            -no-window 
-            -no-audio 
-            -no-boot-anim 
-            -memory 1536 
+            -no-window -no-audio -no-boot-anim -memory 1536 
             -http-proxy http://127.0.0.1:8080
           disable-animations: true
+          # Use the newly patched APK
+          apk-path: ./final-app.apk
           script: ./emulator_script.sh
 
-      - name: Upload Artifacts
+      - name: Upload Intercepted Data
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: challenge-evidence
+          name: challenge-final-proof
           path: |
             final_screenshot.png
             network_traffic.mitm

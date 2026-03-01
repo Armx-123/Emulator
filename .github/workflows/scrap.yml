@@ -1,114 +1,99 @@
-name: Run APK in Emulator
+name: Mobile App Interception Challenge
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
 
 jobs:
-  android:
-    runs-on: ubuntu-latest
-
+  run-challenge:
+    runs-on: macos-latest # macOS is more stable for Android Emulators in Actions
+    
     steps:
-      # ... (Steps Checkout, Setup SDK, Install System Image remain the same) ...
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Find Launch Activity Name from APK
-        id: find_activity
-        # ... (This step remains the same) ...
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Interception Tools
         run: |
-          BUILD_TOOLS_DIR=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
-          AAPT_PATH="$BUILD_TOOLS_DIR/aapt"
-          
-          echo "Using AAPT path: $AAPT_PATH"
-          
-          ACTIVITY_INFO=$("$AAPT_PATH" dump badging base-patched.apk | grep "launchable-activity: name")
-          ACTIVITY_NAME=$(echo "$ACTIVITY_INFO" | sed -n "s/.*name='\\([^']\\+\\).*/\\1/p")
+          pip install mitmproxy
+          # Start mitmdump in background to catch all queries
+          mitmdump -w network_traffic.mitm & 
+          echo "Proxy server started on port 8080"
 
-          if [ -z "$ACTIVITY_NAME" ]; then
-            echo "Error: Could not find launchable-activity in APK manifest."
+      - name: Extract Launch Activity
+        id: find_activity
+        run: |
+          # Locate aapt2 in the Android SDK
+          AAPT2_PATH=$(find $ANDROID_SDK_ROOT/build-tools/ -name aapt2 | sort -r | head -n 1)
+          APK_PATH="./base-patched.apk"
+          
+          if [ ! -f "$APK_PATH" ]; then
+            echo "Error: APK not found at $APK_PATH"
             exit 1
           fi
-          
+
+          # Get the activity name
+          ACTIVITY_NAME=$($AAPT2_PATH dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
-          echo "Found Activity: $ACTIVITY_NAME"
-          
-      - name: Create Emulator Control Script
-        env:
-          ACTIVITY_NAME: ${{ steps.find_activity.outputs.activity_name }}
-          PACKAGE_NAME: newway.open.chatgpt.ai.chat.bot.free
+          echo "Target Activity: $ACTIVITY_NAME"
+
+      - name: Create Interaction Script
         run: |
-          APP_ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
-          APP_PACKAGE="${{ env.PACKAGE_NAME }}"
-          
-          cat << EOF > emulator_script.sh
+          cat << 'EOF' > emulator_script.sh
           #!/bin/bash
           set -e
+          PACKAGE_NAME="newway.open.chatgpt.ai.chat.bot.free"
+          ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
 
-          echo "APK is installed by the runner action parameter."
-          echo "Waiting for boot completion..."
-          adb wait-for-device shell 'while [[ -z \$(getprop sys.boot_completed) ]]; do sleep 1; done;'
+          echo "Waiting for emulator boot..."
+          adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
           
-          echo "Launching App (Package: ${APP_PACKAGE}) with Activity: ${APP_ACTIVITY}"
-          adb shell am start -n "${APP_PACKAGE}/${APP_ACTIVITY}"
-          sleep 5 
-          
-          # *** NEW RECOVERY STEP: Tap 'Wait' on System UI isn't responding ***
-          # Tap at ~50% X, ~58% Y, which should hit the 'Wait' button
-          echo "Tapping to dismiss potential ANR/System UI error popup (tapping 'Wait')."
-          adb shell input tap 500 580 # Using direct coordinates as a safe fallback
+          echo "Dismissing System UI popups..."
+          adb shell input tap 500 580 
           sleep 2
-          
-          echo "Detecting emulator resolution..."
-          SIZE=\$(adb shell wm size | awk '{print \$NF}' | tr -d '\r')
-          WIDTH=\$(echo "\$SIZE" | cut -d'x' -f1)
-          HEIGHT=\$(echo "\$SIZE" | cut -d'x' -f2)
-          
-          if [ -z "\$WIDTH" ] || [ -z "\$HEIGHT" ]; then
-            echo "Error: Could not determine screen resolution."
-            exit 1
-          fi
 
-          echo "Emulator resolution: \${WIDTH}x\${HEIGHT}"
-          
-          X_DISMISS=\$((WIDTH * 20 / 100))
-          Y_DISMISS=\$((HEIGHT * 78 / 100))
-          X_CONT=\$((WIDTH * 50 / 100))
-          Y_CONT=\$((HEIGHT * 88 / 100))
-          
-          echo "Tapping DISMISS at \${X_DISMISS},\${Y_DISMISS}"
-          adb shell input tap "\$X_DISMISS" "\$Y_DISMISS"
-          
-          sleep 1
-          echo "Tapping CONTINUE 4 times"
-          
-          for i in \$(seq 1 4); do
-            adb shell input tap "\$X_CONT" "\$Y_CONT"
+          echo "Launching App: $PACKAGE_NAME"
+          adb shell am start -n "$PACKAGE_NAME/$ACTIVITY"
+          sleep 10 # Give it extra time to load and send initial queries
+
+          # Interacting with the UI (Dismiss and Continue)
+          echo "Performing UI automated taps..."
+          adb shell input tap 200 800 # Dismiss
+          sleep 2
+          for i in {1..4}; do
+            adb shell input tap 500 900 # Continue
             sleep 1
           done
-          
-          # --- SCREENSHOT CAPTURE ---
-          echo "Taking screenshot and pulling artifact..."
+
+          # Capture the required proof
+          echo "Capturing screenshot..."
           adb shell screencap /sdcard/screenshot.png
-          adb pull /sdcard/screenshot.png ./screenshot.png 
+          adb pull /sdcard/screenshot.png ./final_screenshot.png
           
-          echo "Printing filtered app logs..."
-          adb logcat -s "${APP_PACKAGE}" -t 50
-          echo "Script execution complete."
+          echo "Operations complete."
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run emulator, Install App, and Control
+      - name: Run Emulator & Intercept
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
-          target: google_apis 
-          arch: x86
+          target: google_apis
+          arch: x86_64
           force-avd-creation: true
-          emulator-options: "-no-window -noaudio -no-boot-anim"
-          apk-path: base-patched.apk 
+          # THE TWIST: We route all emulator traffic through our mitmproxy
+          emulator-options: "-no-window -no-audio -no-boot-anim -http-proxy http://127.0.0.1:8080"
+          disable-animations: true
           script: ./emulator_script.sh
-          
-      - name: Upload Debug Screenshot
+
+      - name: Upload Results
         uses: actions/upload-artifact@v4
-        if: always() 
+        if: always()
         with:
-          name: emulator-screenshot
-          path: screenshot.png
+          name: challenge-outputs
+          path: |
+            final_screenshot.png
+            network_traffic.mitm

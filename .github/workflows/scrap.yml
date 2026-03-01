@@ -1,11 +1,12 @@
 name: Mobile App Interception Challenge
 
 on:
-  workflow_dispatch: # Allows you to run it manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   run-challenge:
-    runs-on: macos-latest # macOS is more stable for Android Emulators in Actions
+    # Ubuntu + KVM is significantly faster and more stable than macOS for Android
+    runs-on: ubuntu-latest 
     
     steps:
       - name: Checkout Repository
@@ -19,26 +20,21 @@ jobs:
       - name: Install Interception Tools
         run: |
           pip install mitmproxy
-          # Start mitmdump in background to catch all queries
+          # Start mitmdump in background
           mitmdump -w network_traffic.mitm & 
-          echo "Proxy server started on port 8080"
+          echo "Proxy server active on port 8080"
 
       - name: Extract Launch Activity
         id: find_activity
         run: |
-          # Locate aapt2 in the Android SDK
-          AAPT2_PATH=$(find $ANDROID_SDK_ROOT/build-tools/ -name aapt2 | sort -r | head -n 1)
+          BUILD_TOOLS=$(find $ANDROID_SDK_ROOT/build-tools/ -maxdepth 1 -type d | sort -r | head -n 1)
+          AAPT2_PATH="$BUILD_TOOLS/aapt2"
           APK_PATH="./base-patched.apk"
           
-          if [ ! -f "$APK_PATH" ]; then
-            echo "Error: APK not found at $APK_PATH"
-            exit 1
-          fi
+          if [ ! -f "$APK_PATH" ]; then echo "APK Missing"; exit 1; fi
 
-          # Get the activity name
           ACTIVITY_NAME=$($AAPT2_PATH dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
-          echo "Target Activity: $ACTIVITY_NAME"
 
       - name: Create Interaction Script
         run: |
@@ -48,19 +44,30 @@ jobs:
           PACKAGE_NAME="newway.open.chatgpt.ai.chat.bot.free"
           ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
 
-          echo "Waiting for emulator boot..."
-          adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done;'
+          echo "Waiting for device to be recognized..."
+          adb wait-for-device
           
-          echo "Dismissing System UI popups..."
+          echo "Waiting for boot completion (Max 5 mins)..."
+          # This loop checks the boot property every 5 seconds
+          for i in {1..60}; do
+            BOOT_STATE=$(adb shell getprop sys.boot_completed | tr -d '\r')
+            if [ "$BOOT_STATE" == "1" ]; then
+              echo "Boot Completed!"
+              break
+            fi
+            echo "Still booting... ($i/60)"
+            sleep 5
+          done
+
+          echo "Dismissing initial system dialogs..."
           adb shell input tap 500 580 
           sleep 2
 
-          echo "Launching App: $PACKAGE_NAME"
+          echo "Launching App..."
           adb shell am start -n "$PACKAGE_NAME/$ACTIVITY"
-          sleep 10 # Give it extra time to load and send initial queries
+          sleep 12 
 
-          # Interacting with the UI (Dismiss and Continue)
-          echo "Performing UI automated taps..."
+          echo "Automating UI Taps..."
           adb shell input tap 200 800 # Dismiss
           sleep 2
           for i in {1..4}; do
@@ -68,24 +75,21 @@ jobs:
             sleep 1
           done
 
-          # Capture the required proof
-          echo "Capturing screenshot..."
+          echo "Capturing final state..."
           adb shell screencap /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
-          
-          echo "Operations complete."
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator & Intercept
+      - name: Run Emulator (KVM Accelerated)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
+          api-level: 28 # API 28 is often more stable in headless environments
           target: google_apis
           arch: x86_64
           force-avd-creation: true
-          # THE TWIST: We route all emulator traffic through our mitmproxy
-          emulator-options: "-no-window -no-audio -no-boot-anim -http-proxy http://127.0.0.1:8080"
+          # Enable GPU 'swiftshader_indirect' for headless stability
+          emulator-options: "-no-window -no-audio -no-boot-anim -camera-back none -http-proxy http://127.0.0.1:8080 -gpu swiftshader_indirect"
           disable-animations: true
           script: ./emulator_script.sh
 
@@ -93,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: challenge-outputs
+          name: challenge-results
           path: |
             final_screenshot.png
             network_traffic.mitm

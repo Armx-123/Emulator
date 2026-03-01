@@ -5,7 +5,6 @@ on:
 
 jobs:
   run-challenge:
-    # Ubuntu + KVM is significantly faster and more stable than macOS for Android
     runs-on: ubuntu-latest 
     
     steps:
@@ -20,7 +19,7 @@ jobs:
       - name: Install Interception Tools
         run: |
           pip install mitmproxy
-          # Start mitmdump in background
+          # Start mitmdump in background to catch all queries
           mitmdump -w network_traffic.mitm & 
           echo "Proxy server active on port 8080"
 
@@ -35,6 +34,7 @@ jobs:
 
           ACTIVITY_NAME=$($AAPT2_PATH dump badging "$APK_PATH" | grep "launchable-activity" | sed -n "s/.*name='\([^']\+\)'.*/\1/p")
           echo "activity_name=$ACTIVITY_NAME" >> "$GITHUB_OUTPUT"
+          echo "Target Activity: $ACTIVITY_NAME"
 
       - name: Create Interaction Script
         run: |
@@ -44,52 +44,65 @@ jobs:
           PACKAGE_NAME="newway.open.chatgpt.ai.chat.bot.free"
           ACTIVITY="${{ steps.find_activity.outputs.activity_name }}"
 
-          echo "Waiting for device to be recognized..."
+          echo "Waiting for boot completion..."
           adb wait-for-device
-          
-          echo "Waiting for boot completion (Max 5 mins)..."
-          # This loop checks the boot property every 5 seconds
           for i in {1..60}; do
             BOOT_STATE=$(adb shell getprop sys.boot_completed | tr -d '\r')
             if [ "$BOOT_STATE" == "1" ]; then
               echo "Boot Completed!"
               break
             fi
-            echo "Still booting... ($i/60)"
             sleep 5
           done
 
-          echo "Dismissing initial system dialogs..."
-          adb shell input tap 500 580 
+          # --- FIX FOR 'SYSTEM UI ISN'T RESPONDING' ---
+          echo "Clearing system dialogs (Tapping 'Wait' and Back button)..."
+          # Tap roughly where the 'Wait' button appears in your screenshot
+          adb shell input tap 500 600 
           sleep 2
+          # Press BACK to ensure any other overlays are dismissed
+          adb shell input keyevent 4
+          sleep 1
 
-          echo "Launching App..."
-          adb shell am start -n "$PACKAGE_NAME/$ACTIVITY"
-          sleep 12 
+          echo "Force-starting the app..."
+          # -S force-stops the app before starting to ensure a clean state
+          adb shell am start -S -n "$PACKAGE_NAME/$ACTIVITY"
+          
+          echo "Allowing 20s for app to load..."
+          sleep 20
 
-          echo "Automating UI Taps..."
-          adb shell input tap 200 800 # Dismiss
-          sleep 2
+          # --- DEBUG: CHECK WHAT IS ON SCREEN ---
+          echo "Current Focused Window:"
+          adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'
+
+          echo "Performing UI automated taps..."
+          # Adjust these coordinates if your app's buttons are in different spots
+          adb shell input tap 200 800 # Likely 'Dismiss' or 'Skip'
+          sleep 3
+          
           for i in {1..4}; do
-            adb shell input tap 500 900 # Continue
-            sleep 1
+            echo "Tap Continue iteration $i"
+            adb shell input tap 500 900 
+            sleep 2
           done
 
           echo "Capturing final state..."
           adb shell screencap /sdcard/screenshot.png
           adb pull /sdcard/screenshot.png ./final_screenshot.png
+          
+          echo "Challenge script finished."
           EOF
           chmod +x emulator_script.sh
 
-      - name: Run Emulator (KVM Accelerated)
+      - name: Run Emulator (High Performance Mode)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 28 # API 28 is often more stable in headless environments
+          api-level: 28
           target: google_apis
           arch: x86_64
           force-avd-creation: true
-          # Enable GPU 'swiftshader_indirect' for headless stability
-          emulator-options: "-no-window -no-audio -no-boot-anim -camera-back none -http-proxy http://127.0.0.1:8080 -gpu swiftshader_indirect"
+          # Increased RAM and added swiftshader for better stability in CI
+          emulator-options: "-no-window -no-audio -no-boot-anim -memory 2048 -http-proxy http://127.0.0.1:8080 -gpu swiftshader_indirect"
           disable-animations: true
           script: ./emulator_script.sh
 

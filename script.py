@@ -7,7 +7,7 @@ def run():
         page = browser.new_page()
         
         # Navigate to the URL
-        page.goto("https://www.pinterest.com/")
+        page.goto("https://in.pinterest.com/pin/1029424427340389175/")
         
         # Print the title
         print(f"Page Title: {page.title()}")
